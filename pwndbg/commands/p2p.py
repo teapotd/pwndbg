@@ -97,6 +97,36 @@ def p2p_walk(addr: int, ranges: List[List[AddrRange]], current_level: int) -> in
     return p2p_walk(maybe_addr, ranges, current_level + 1)
 
 
+def pointer_pattern(low, high):
+    if pwndbg.aglib.arch.endian == 'little':
+        low = low[::-1]
+        high = high[::-1]
+
+    for i, (a, b) in enumerate(zip(low, high)):
+        if a != b:
+            low = low[:i]
+            break
+
+    if pwndbg.aglib.arch.endian == 'little':
+        low = low[::-1]
+        offset = pwndbg.aglib.arch.ptrsize - len(low)
+    else:
+        offset = 0
+
+    return bytearray(low), offset
+
+
+def find_pattern(pattern, begin, end):
+    if len(pattern) == 0:
+        return range(begin, end)
+    return pwndbg.dbg.selected_inferior().find_in_memory(
+        pattern,
+        begin,
+        end - begin,
+        1, -1, -1,
+    )
+
+
 @pwndbg.commands.ArgparsedCommand(parser, category=CommandCategory.MEMORY)
 @pwndbg.commands.OnlyWhenRunning
 def p2p(mapping_names: List[List[AddrRange]] | None = None) -> None:
@@ -106,8 +136,13 @@ def p2p(mapping_names: List[List[AddrRange]] | None = None) -> None:
     if len(mapping_names) == 1:
         mapping_names.append(get_addrrange_any_named())
 
+    low = pwndbg.aglib.arch.pack(min(rng.begin for rng in mapping_names[1]))
+    high = pwndbg.aglib.arch.pack(max(rng.end for rng in mapping_names[1]))
+    pattern, offset = pointer_pattern(low, high)
+
     for rng in mapping_names[0]:
-        for addr in range(rng.begin, rng.end):
+        for addr in find_pattern(pattern, rng.begin+offset, rng.end+offset):
+            addr -= offset
             maybe_pointer = p2p_walk(addr, mapping_names, current_level=1)
 
             if maybe_pointer is not None:
